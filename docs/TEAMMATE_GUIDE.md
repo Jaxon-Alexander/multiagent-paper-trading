@@ -4,7 +4,7 @@ Welcome! You can build sentiment independently without touching the brokerage ga
 
 ## Getting started
 
-1. Install Python 3.12 and Git. Clone the repo. Run `py -3.12 -m venv .venv`, activate, and `python -m pip install -e ".[dev]"` (PowerShell).
+1. Install Python 3.14 and Git. Clone the repo. Run `py -3.14 -m venv .venv`, activate, and `python -m pip install -e ".[dev]"` (PowerShell).
 2. Run `python -m market_agents analyze --symbols QQQ SQQQ --demo` and `python -m pytest -q` **without API keys**.
 3. Create branch `feature/sentiment-agent`. Do not commit `.env`, API keys, account information, or traces.
 4. Read `src/market_agents/extensions/sentiment.py` and `src/market_agents/contracts.py`.
@@ -50,4 +50,3 @@ The orchestrator constructor accepts `sentiment=YourSentimentProvider()`; the de
 - Clear provenance for each item of evidence.
 - No changes to paper-order permissions, executable actions or limits.
 
-**Ask for review before connecting a sentiment score to any future trading policy.**

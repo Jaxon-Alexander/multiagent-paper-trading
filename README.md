@@ -1,10 +1,10 @@
 # Multi-Agent Market & Paper-Position Analyzer
 
-Team foundation for an agentic **Alpaca paper-trading** research project. Reuses the Lab #3/#4 market analysis components, but adds **read-only paper-account / position analysis**, a fourth specialized agent, and a future **Sentiment Agent extension point**.
+Team foundation for an agentic **Alpaca paper-trading** research project.
 
 **Current state (v0.1):** analyzes arbitrary US stock/ETF tickers; reads paper holdings and account equity; interprets positions including entry price, unrealized P/L and account concentration; runs four distinct LLM agent roles; preserves deterministic SMA/RSI/volatility and classifications; supports an optional Code Execution audit; and separately supports carefully gated **manual** paper limit orders. **It does not yet autonomously create trading signals or execute trades.**
 
-The initial reproducible symbols are **QQQ** and **SQQQ**, but `--symbols` accepts other tickers. SQQQ targets -3× the **daily** Nasdaq-100 performance; it does not provide -3× performance over an arbitrary holding period. QQQ + SQQQ together is not assumed to be a perfect hedge.
+The initial reproducible symbols are **QQQ** and **SQQQ**, but `--symbols` accepts other tickers. SQQQ targets -3× the **daily** Nasdaq-100 performance; it does not provide -3× performance over an arbitrary holding period.
 
 ## Architecture
 
@@ -34,10 +34,10 @@ The Python orchestrator—not the LLM—controls data retrieval, computation, ro
 
 ## Quick start (Windows PowerShell)
 
-Use **Python 3.12** (recommended) or another supported Python version with compatible wheels.
+Use **Python 3.14** (recommended) or another supported Python version with compatible wheels.
 
 ```powershell
-py -3.12 -m venv .venv
+py -3.14 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
@@ -117,15 +117,13 @@ tests/                   # unit and routing tests
 3. Never commit `.env`, credential files, `traces/`, account snapshots, or log dumps.
 4. Changes to brokerage order gates require a second-person PR review. Never permit LLM-selected raw order requests to reach the broker.
 5. Sentiment integration details are in [`docs/TEAMMATE_GUIDE.md`](docs/TEAMMATE_GUIDE.md).
-6. GitHub creation/push instructions are in [`docs/PUBLISHING.md`](docs/PUBLISHING.md).
 
 ## Important limitations
 
 - No automated trade strategy, trade recommendation, automated order loop, backtester, or brokerage order monitor yet.
 - Alpaca paper fills simulate trading and do **not** represent actual execution conditions or investment performance.
-- The demo uses **synthetic** market/portfolio data; never compare it to real quotes.
+- The demo uses synthetic market/portfolio data.
 - The volatility and RSI thresholds are project conventions, not financial advice or guaranteed predictors.
 - Historical IEX bars, broker position marks, and later sentiment sources may have different coverage and timestamps.
 - Treat QQQ/SQQQ positions carefully: leveraged inverse daily funds can exhibit path dependence and compounding effects.
 
-The repo is a research prototype, **not a live trading system**.
