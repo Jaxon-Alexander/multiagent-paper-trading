@@ -104,7 +104,6 @@ src/market_agents/
 
 docs/ARCHITECTURE.md      # technical design and limits
 docs/TEAMMATE_GUIDE.md     # how to integrate new sentiment agent
-docs/ROADMAP.md           # project phases
 .github/workflows/test.yml # credential-free CI
 
 tests/                   # unit and routing tests
