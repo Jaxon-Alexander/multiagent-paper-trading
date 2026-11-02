@@ -1,0 +1,2 @@
+# Install runtime package and all required dependencies from project metadata.
+-e .
