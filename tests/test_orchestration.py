@@ -1,8 +1,9 @@
 import unittest
 from datetime import date
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 from market_agents.orchestrator import MultiAgentOrchestrator
+from market_agents.demo import bars as demo_bars
 
 
 class InvalidSentiment:
@@ -53,13 +54,88 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(result['symbols']['MSFT']['paper_position']['state'], 'NONE')
         self.assertNotIn('PositionAnalysisAgent', result['coordination']['agents_invoked'])
 
-    def test_audit_demo_is_not_passed(self):
-        system = self.make_system(audit=True)
+    def make_stubbed_live(self, *, decision: bool, with_bars: bool = True, extreme_rsi: bool = True):
+        # No Gemini / Alpaca network: stub ONLY the LLM decisions and data tools.
+        def data_provider(ticker, start, end):
+            stock = demo_bars(ticker, date.fromisoformat(start), date.fromisoformat(end))
+            if not with_bars:
+                stock['bars'] = []
+            elif extreme_rsi:
+                for i, bar in enumerate(stock['bars']):
+                    bar['close'] = 100.0 + i  # Wilder RSI14 = 100 (extreme)
+            return stock
+
+        broker = Mock()
+        broker.snapshot.return_value = {
+            'paper': True, 'source': 'MOCK_PAPER',
+            'positions': [], 'account': {'equity': 10000}}
+        system = MultiAgentOrchestrator(demo=False, model='fake-gemini',
+                                        client=Mock(), broker=broker, data_provider=data_provider,
+                                        today=date(2026, 11, 2))
+        system.market_agent.run = lambda ctx, trace: {'needs_volume': True, 'reason': 'test'}
+        system.technical_agent.run = lambda ctx, trace: {'explanation': 'test',
+                                                         'requested_indicators': []}
+
+        def risk_agent_run(context, trace):
+            self.assertEqual(context['audit_context']['available'], with_bars)
+            if with_bars and extreme_rsi:
+                self.assertGreaterEqual(context['analysis']['indicators']['rsi_14'], 70)
+            return {'notes': [], 'request_audit': decision,
+                    'reason': 'Extreme RSI deserves an independent calculation audit.'
+                              if decision else 'No mathematical anomaly to verify.'}
+        system.risk_agent.run = risk_agent_run
+        return system
+
+    def test_gemini_risk_decision_can_trigger_audit_without_flag(self):
+        system = self.make_stubbed_live(decision=True)
+        verified = {'status': 'passed', 'executed': True, 'verified': True,
+                    'reason': 'Independent verification matched'}
+        with patch('market_agents.orchestrator.run_code_audit', return_value=verified) as auditor:
+            result = system.analyze(['QQQ'])
+        auditor.assert_called_once()
+        audit = result['symbols']['QQQ']['risk_review']['audit']
+        self.assertEqual(audit['trigger'], 'risk_agent')
+        self.assertEqual(audit['decision_reason'],
+                         'Extreme RSI deserves an independent calculation audit.')
+        self.assertTrue(audit['verified'])
+        self.assertIn('QQQ:independent_code_audit', result['coordination']['path'])
+        self.assertTrue(any(e['event'] == 'audit_decision' and e['requested'] for e in system.events))
+
+    def test_gemini_can_choose_not_to_audit_even_with_an_extreme_rsi(self):
+        system = self.make_stubbed_live(decision=False)
+        with patch('market_agents.orchestrator.run_code_audit') as auditor:
+            result = system.analyze(['QQQ'])
+        auditor.assert_not_called()
+        audit = result['symbols']['QQQ']['risk_review']['audit']
+        self.assertEqual(audit['status'], 'not_requested')
+        self.assertEqual(audit['trigger'], 'none')
+
+    def test_agent_request_cannot_run_audit_with_insufficient_data(self):
+        system = self.make_stubbed_live(decision=True, with_bars=False)
+        with patch('market_agents.orchestrator.run_code_audit') as auditor:
+            result = system.analyze(['QQQ'])
+        auditor.assert_not_called()
+        audit = result['symbols']['QQQ']['risk_review']['audit']
+        self.assertEqual(audit['status'], 'skipped')
+        self.assertFalse(audit['executed'])
+        self.assertIsNone(audit['verified'])
+
+    def test_audit_failure_preserves_python_values_and_reports_uncertainty(self):
+        system = self.make_stubbed_live(decision=True)
+        failed = {'status': 'failed', 'executed': True, 'verified': False,
+                  'reason': 'One or more audit values differed'}
+        with patch('market_agents.orchestrator.run_code_audit', return_value=failed):
+            result = system.analyze(['QQQ'])
+        analysis = result['symbols']['QQQ']['analysis']
+        self.assertEqual(analysis['indicators']['rsi_14'], 100.0)
+        self.assertIn('Independent audit was not verified', analysis['uncertainty'])
+        self.assertEqual(result['symbols']['QQQ']['risk_review']['status'], 'REVIEW')
+
+    def test_scripted_demo_does_not_run_builtin_code(self):
+        system = self.make_system()
         result = system.analyze(['QQQ'])
         audit = result['symbols']['QQQ']['risk_review']['audit']
-        self.assertEqual(audit['trigger'], 'user_flag')
-        self.assertEqual(audit['status'], 'offline_simulation')
-        self.assertIsNone(audit['verified'])
+        self.assertEqual(audit['status'], 'not_requested')
         self.assertFalse(audit['executed'])
 
     def test_invalid_sentiment_fails_closed(self):

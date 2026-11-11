@@ -2,7 +2,7 @@
 
 Team foundation for an agentic **Alpaca paper-trading** research project.
 
-**Current state (v0.1):** analyzes arbitrary US stock/ETF tickers; reads paper holdings and account equity; interprets positions including entry price, unrealized P/L and account concentration; runs four distinct LLM agent roles; preserves deterministic SMA/RSI/volatility and classifications; supports an optional Code Execution audit; and separately supports carefully gated **manual** paper limit orders. **It does not yet autonomously create trading signals or execute trades.**
+**Current state (v0.1):** analyzes arbitrary US stock/ETF tickers; reads paper holdings and account equity; interprets positions including entry price, unrealized P/L and account concentration; runs four distinct LLM agent roles; preserves deterministic SMA/RSI/volatility and classifications; supports a Gemini Risk Agent-initiated Code Execution audit (no CLI audit flag); and separately supports carefully gated **manual** paper limit orders. **It does not yet autonomously create trading signals or execute trades.**
 
 The initial reproducible symbols are **QQQ** and **SQQQ**, but `--symbols` accepts other tickers. SQQQ targets -3× the **daily** Nasdaq-100 performance; it does not provide -3× performance over an arbitrary holding period.
 
@@ -23,7 +23,7 @@ User CLI (symbols, dates, optional context)
            +---> Position Analysis Agent (only if paper position exists; LLM interpretation only)
            +---> [Sentiment Agent adapter: disabled until teammate implements]
            +---> Risk Validation Agent (deterministic warnings + LLM review)
-           +---> optional Gemini Code Execution audit (verification only)
+           +---> Gemini-requested Code Execution audit (SMA20, RSI14, volatility30; verification only)
            |
          JSON output + trace
 
@@ -60,7 +60,7 @@ Live read-only analysis of market data and your **paper positions**:
 python -m market_agents portfolio
 python -m market_agents analyze --symbols QQQ SQQQ --days 125
 python -m market_agents analyze --symbols AAPL --days 125 --prompt "Review current trend and open paper position, if any"
-python -m market_agents analyze --symbols MSFT --days 125 --audit
+python -m market_agents analyze --symbols MSFT --days 125
 ```
 
 Explicit date-window test:
@@ -68,6 +68,31 @@ Explicit date-window test:
 ```powershell
 python -m market_agents analyze --symbols QQQ --start 2026-10-10 --end 2026-10-11
 ```
+
+### Automatic independent calculation audits
+
+The **RiskValidationAgent (Gemini)** now returns an explicit `request_audit` Boolean and an
+explanation after reviewing the Python-computed indicators and risk flags. Its instructions
+prioritize a verification request for unusual numerical conditions such as **RSI >= 70 or <= 30**,
+high historical volatility, or inconsistent indicator values. This is an LLM *decision* rather
+than a fixed `if RSI > threshold: always audit` rule; its choice may differ between requests.
+
+When Gemini requests verification, the **Python orchestrator** checks that at least 31 price
+bars, SMA20, RSI14 and 30-day volatility, and a live Gemini client exist. Only then does it
+invoke **Gemini built-in Code Execution**, which independently recomputes **SMA20, Wilder RSI14
+(using all available chronological prices), and annualized 30-return volatility**. Numerical
+results must match the authoritative Python values within 0.0002, and an actual successful
+execution result must be present. A mismatch or API failure yields `failed`/`error` plus
+uncertainty; the original Python indicator values are NEVER overwritten.
+
+No `--audit` option is needed or accepted. An additional Code Execution request consumes
+Gemini quota and may fail under 503/429 load. Use the analysis output's
+`symbols.<ticker>.risk_review.audit` object (`trigger: risk_agent`, `status`, `verified`,
+`decision_reason`) and the saved trace event `audit_decision` to understand the choice.
+
+The **`--demo` mode never uses Gemini or Code Execution**, even for extreme RSI; it demonstrates
+the deterministic workflow only. To verify actual Gemini autonomous audit decisions, run the
+normal (non-demo) analysis with valid API keys.
 
 Results are JSON to stdout and trace events go to `traces/trace_*.json` (ignored by Git). Price observation dates refer to **historical daily bars**, not live market quotes. Account/position values are from a **different broker endpoint** and may be observed at another time. Historical free-tier IEX volumes are a subset of US market activity, not consolidated volume.
 
@@ -96,7 +121,7 @@ src/market_agents/
     indicators.py          # Lab #3/#4 deterministic math and Alpaca bars
     broker.py              # paper-only account/positions; separate order gate
     gemini.py              # validated JSON response/retries
-    audit.py               # optional Code Execution verifier
+    audit.py               # Risk Agent-triggered Code Execution verifier
     contracts.py           # agent and sentiment JSON schemas
     extensions/sentiment.py# teammate plug-in interface + disabled default
     demo.py                # synthetic fixtures, clearly labeled

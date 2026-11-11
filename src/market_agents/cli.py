@@ -33,7 +33,6 @@ def build_parser():
     analyze.add_argument('--end', help='YYYY-MM-DD, explicit interval end')
     analyze.add_argument('--prompt', default='', help='Optional natural language context; ticker/dates remain CLI-owned')
     analyze.add_argument('--demo', action='store_true', help='Synthetic fixture; NO Gemini/Alpaca API calls')
-    analyze.add_argument('--audit', action='store_true', help='Request optional Gemini Code Execution audit')
     analyze.add_argument('--trace', default=None, help='Optional trace JSON output path')
     portfolio = sub.add_parser('portfolio', help='Read current paper account/positions only')
     portfolio.add_argument('--demo', action='store_true', help='Synthetic example, NOT real account')
@@ -53,7 +52,7 @@ def main(argv=None):
     load_dotenv()
     try:
         if args.command == 'analyze':
-            orchestrator = MultiAgentOrchestrator(demo=args.demo, audit=args.audit)
+            orchestrator = MultiAgentOrchestrator(demo=args.demo)
             result = orchestrator.analyze(args.symbols, days=args.days, prompt=args.prompt,
                                           start_date=args.start, end_date=args.end)
             print(json.dumps(result, indent=2, default=str))

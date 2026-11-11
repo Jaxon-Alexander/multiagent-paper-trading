@@ -7,14 +7,14 @@
 | MarketDataAgent | Explain required price/volume context | CLI supplies ticker/date; Alpaca IEX fetch; range/ticker validation |
 | TechnicalAnalysisAgent | Explain trend/momentum/volatility | Python SMA20/50, Wilder RSI14, volatility30, rule labels |
 | PositionAnalysisAgent | Interpret an existing **paper** holding and market conditions | Alpaca paper account & positions, P/L and position weights from broker/Python |
-| RiskValidationAgent | Explain uncertainty, request extra audit | Flags and validation status, mandatory risk warnings |
+| RiskValidationAgent | Interpret uncertainty and autonomously decide when numerical verification is worthwhile; return `request_audit` and reason | Python enforces tool eligibility, performs and checks independent Code Execution, retains authoritative values |
 | Future Sentiment Agent | Source-grounded sentiment from teammate | Contract/schema validation, timestamp, safe UNKNOWN fallback |
 
 ## Orchestration
 
 **Static path:** request → MarketDataAgent → Alpaca bars → trusted calculator → TechnicalAnalysisAgent → (if held) PositionAnalysisAgent → optional Sentiment Agent → RiskValidationAgent → JSON.
 
-**Dynamic branches:** no history skips TechnicalAnalysisAgent; absent/unknown paper holding skips PositionAnalysisAgent; agent error retains deterministic outputs; invalid sentiment becomes UNKNOWN; audit requested via explicit `--audit` or by a flagged Risk Agent decision when data is sufficient. Audit output never replaces Python calculations.
+**Dynamic branches:** no history skips TechnicalAnalysisAgent; absent/unknown paper holding skips PositionAnalysisAgent; agent error retains deterministic outputs; invalid sentiment becomes UNKNOWN. The RiskValidationAgent uses Gemini to decide whether a calculation audit is useful; there is NO CLI `--audit` flag or mandatory risk-flag gate. When requested, Python verifies data availability (31+ bars and SMA20, RSI14 and volatility) and runs Gemini built-in Code Execution only if it is eligible. A skipped or failed audit is made explicit. Audits never replace Python calculations.
 
 The orchestrator calls one Gemini JSON request per active LLM agent, with model-specific instructions and validated JSON response. The app owns raw numbers and uses only explanatory text from the LLM. Each symbol can have an independent path. A paper portfolio snapshot is read once per analyze command.
 
@@ -47,3 +47,13 @@ These thresholds are project rules, not forecasts, liquidity tests, or market co
 - Alpaca brokerage unavailable: analysis continues but position status is UNAVAILABLE, not NONE.
 - Sentiment not built yet; disabled until teammate provides a reliable, verifiable adapter.
 - Paper environment only, no real-money deployment path in this repository.
+
+## Gemini-initiated numerical audit (current implementation)
+
+- Each ticker receives a RiskValidationAgent JSON decision: `request_audit: true/false` plus a reason.
+- The model considers extreme RSI (>=70 or <=30), high volatility, and suspect/conflicting numerical indicators, while avoiding pointless audits for SQQQ exposure, a losing position, or negative news alone. These are guidance, NOT automatic triggers; the model may decline.
+- The orchestrator emits an `audit_decision` trace event, checks that a live Gemini client and complete 31+ bar data exist, then invokes the Code Execution verifier if the model requested it.
+- Code Execution independently recomputes SMA(20), **Wilder RSI(14) initialized from the first 14 returns**, and sample-standard-deviation 30-return annualized volatility; a successful execution and numeric/Boolean comparisons are required for `verified: true`.
+- Trace `builtin_tool` reports verification; a 503 or calculation disagreement produces error/uncertainty without altering trusted indicator values.
+- Only the Python orchestrator invokes Code Execution. RiskValidationAgent cannot write tool code, change indicator values, or place orders.
+- The offline `--demo` never makes model decisions or runs Code Execution, so run live mode to observe model-selected audit behavior.
