@@ -11,6 +11,10 @@ from .broker import AlpacaPaperBroker
 from .demo import snapshot as demo_snapshot, bars as demo_bars
 from .extensions.sentiment import DisabledSentimentProvider, validate_sentiment_response
 from .gemini import ask_json
+from .guardrails import (
+    validate_user_prompt, sanitize_public_text, validate_external_sentiment,
+    guard_analysis_report, sanitize_trace_event,
+)
 from .indicators import build_analysis, calculate_technical_indicators, get_stock_data, validate_dates
 
 
@@ -49,7 +53,7 @@ class MultiAgentOrchestrator:
         self.risk_agent = RiskValidationAgent(self._gateway)
 
     def record(self, event: str, **details):
-        self.events.append({'step': len(self.events) + 1, 'event': event, **details})
+        self.events.append(sanitize_trace_event({'step': len(self.events) + 1, 'event': event, **details}))
 
     def _gateway(self, name: str, system: str, context: dict, schema: dict, trace) -> dict:
         if self.demo:
@@ -70,13 +74,7 @@ class MultiAgentOrchestrator:
 
     @staticmethod
     def _safe_text(value: Any, limit: int = 1200) -> str:
-        if not isinstance(value, str):
-            return ''
-        value = value[:limit]
-        # Free-form prose is advisory. Strip obvious execution instructions; the order API is never exposed.
-        if re.search(r'\b(?:buy|sell|purchase|submit|execute|place)\s+(?:\d+\s+)?(?:shares|stocks|orders)\b', value, re.I):
-            return '[Trading instruction omitted]'
-        return value
+        return sanitize_public_text(value, limit)
 
     @staticmethod
     def _risk_flags(analysis: dict, position: dict | None, snapshot: dict | None) -> list[str]:
@@ -137,6 +135,7 @@ class MultiAgentOrchestrator:
     def analyze(self, symbols: list[str], *, days: int = 125, prompt: str = '',
                 start_date: str | None = None, end_date: str | None = None) -> dict:
         self.events, self.agent_names, self.paths = [], [], []
+        prompt = validate_user_prompt(prompt)  # BEFORE any broker/model/tool call
         if not symbols or len(symbols) > 15:
             raise ValueError('Provide 1 to 15 symbols')
         if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= 730:
@@ -150,7 +149,7 @@ class MultiAgentOrchestrator:
                 names.append(name)
         self.record('request', symbols=names, start=start.isoformat(), end=end.isoformat(),
                     mode='OFFLINE_SCRIPTED_SYNTHETIC' if self.demo else 'LIVE_GEMINI_ALPACA_PAPER',
-                    prompt=prompt[:600], model=self.model)
+                    prompt_length=len(prompt), model=self.model)
         broker, broker_error = self._snapshot()
         reports = {}
         for symbol in names:
@@ -213,6 +212,7 @@ class MultiAgentOrchestrator:
                 sentiment = self.sentiment.analyze(symbol, {'analysis': analysis,
                                                               'paper_position': position})
                 validate_sentiment_response(sentiment, ticker=symbol)
+                validate_external_sentiment(sentiment)  # never forward injected news to the Risk Agent
             except Exception as exc:
                 self.record('sentiment_error', symbol=symbol, error=str(exc)[:250])
                 sentiment = DisabledSentimentProvider().analyze(symbol, {})
@@ -285,7 +285,7 @@ class MultiAgentOrchestrator:
         combined_flags = []
         if 'QQQ' in held and 'SQQQ' in held:
             combined_flags.append('Both QQQ and SQQQ held in paper account; no assumption of a perfect hedge.')
-        return {
+        report = {
             'generated_at_utc': datetime.now(timezone.utc).isoformat(),
             'mode': 'OFFLINE_SCRIPTED_SYNTHETIC' if self.demo else 'LIVE_GEMINI_ALPACA_PAPER',
             'paper_portfolio': broker,
@@ -297,3 +297,7 @@ class MultiAgentOrchestrator:
                              'market_feed': 'synthetic' if self.demo else 'IEX',
                              'paper_only': True},
         }
+        report, cleaned_fields = guard_analysis_report(report, names)
+        if cleaned_fields:
+            self.record('output_guardrail', filtered_fields=cleaned_fields)
+        return report

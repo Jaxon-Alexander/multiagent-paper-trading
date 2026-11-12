@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from jsonschema import validate
+from .guardrails import sanitize_agent_result
 
 
 def ask_json(client, model: str, system: str, payload: dict, schema: dict, on_event, name: str) -> dict:
@@ -19,6 +20,9 @@ def ask_json(client, model: str, system: str, payload: dict, schema: dict, on_ev
             )
             result = json.loads(response.text)
             validate(result, schema)
+            result, filtered_fields = sanitize_agent_result(result)
+            if filtered_fields:
+                on_event("agent_output_guardrail", agent=name, filtered_fields=filtered_fields)
             on_event("agent_response", agent=name, response=result)
             return result
         except Exception as err:

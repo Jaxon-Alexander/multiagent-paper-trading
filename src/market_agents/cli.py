@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from .broker import AlpacaPaperBroker
 from .demo import snapshot as demo_snapshot
 from .orchestrator import MultiAgentOrchestrator
+from .guardrails import sanitize_agent_result, sanitize_public_text
 
 
 def _write_trace(events, filename=None):
@@ -59,6 +60,7 @@ def main(argv=None):
             print(f'\nTrace: {_write_trace(orchestrator.events, args.trace)}', file=sys.stderr)
         elif args.command == 'portfolio':
             result = demo_snapshot() if args.demo else AlpacaPaperBroker().snapshot()
+            result, _ = sanitize_agent_result(result)
             print(json.dumps(result, indent=2, default=str))
         elif args.command in ('order-preview', 'paper-order'):
             # A paper-order call is NEVER available to the LLM agent function gateway.
@@ -67,15 +69,17 @@ def main(argv=None):
                       'limit_price': args.limit_price}
             preview = broker.preview_limit_order(**kwargs)
             if args.command == 'order-preview':
+                preview, _ = sanitize_agent_result(preview)
                 print(json.dumps(preview, indent=2))
             else:
                 if not args.confirm_paper:
                     raise PermissionError('Missing --confirm-paper. Preview orders first.')
                 result = broker.submit_limit_order(preview, confirmation=True)
+                result, _ = sanitize_agent_result(result)
                 print(json.dumps(result, indent=2))
         return 0
     except Exception as exc:
-        print(f'ERROR: {exc}', file=sys.stderr)
+        print(f'ERROR: {sanitize_public_text(str(exc), 450)}', file=sys.stderr)
         return 1
 
 

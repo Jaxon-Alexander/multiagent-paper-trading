@@ -57,3 +57,19 @@ These thresholds are project rules, not forecasts, liquidity tests, or market co
 - Trace `builtin_tool` reports verification; a 503 or calculation disagreement produces error/uncertainty without altering trusted indicator values.
 - Only the Python orchestrator invokes Code Execution. RiskValidationAgent cannot write tool code, change indicator values, or place orders.
 - The offline `--demo` never makes model decisions or runs Code Execution, so run live mode to observe model-selected audit behavior.
+
+## User-input and output trust boundaries (guardrail update)
+
+- The CLI/orchestrator validates user-provided context **before** any agent or
+  Alpaca operation. Quotes that try to impersonate system instructions, leak
+  credentials or request orders are rejected rather than forwarded.
+- News sentiment is a lower-trust source. The Python adapter checks its JSON
+  structure and refuses unsafe article evidence before the Risk Agent sees it.
+- Gemini may still produce untrusted narrative despite its strict JSON schema;
+  the gateway filters agent strings, and the final report is validated and
+  scrubbed before printing. Suppression is visible as `REVIEW` + uncertainty.
+- The existing Python calculation engine, agent-driven numerical audit, and
+  human-approved **paper-only** order submission are unchanged. The guardrails
+  do not grant agents new tools or trading authority.
+
+See `docs/GUARDRAILS.md` and `tests/test_guardrails.py`.
