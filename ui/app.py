@@ -110,7 +110,7 @@ def panel_portfolio(ticker: str, entry: dict, report: dict) -> None:
         st.warning(flag)
 
 
-def panel_news(ticker: str, entry: dict) -> None:
+def panel_news(ticker: str, entry: dict, status: str | None = None) -> None:
     s = entry.get("sentiment") or {}
     st.markdown(f"**{ticker}** label **{s.get('label')}**  ·  score {s.get('score')}  ·  "
                 f"newest article {s.get('observed_at')}  ·  source {s.get('source')}")
@@ -118,6 +118,9 @@ def panel_news(ticker: str, entry: dict) -> None:
         st.write(f"- {line}")
     if s.get("label") == "UNKNOWN":
         st.caption("UNKNOWN = the news agent is off, has no fresh evidence, or failed safely.")
+        if status:
+            st.caption(f"Reason reported by the news agent: {status}  (e.g. ERROR:… = a Gemini or Alpaca call failed, "
+                       "NO_VALID_AGENT_ANSWER = Gemini gave no usable answer, INSUFFICIENT_DATA = not enough fresh news)")
     if ticker == "SQQQ" and s.get("label") in ("POSITIVE", "NEGATIVE"):
         st.caption("SQQQ moves opposite to the Nasdaq-100: a POSITIVE market label is bad news for an SQQQ holder.")
 
@@ -225,7 +228,7 @@ def show_results(out: dict) -> None:
     with tabs[1]:
         panel_portfolio(ticker, entry, report)
     with tabs[2]:
-        panel_news(ticker, entry)
+        panel_news(ticker, entry, out.get("news_status"))
     with tabs[3]:
         panel_risk(ticker, entry)
     with tabs[4]:

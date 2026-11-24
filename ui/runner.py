@@ -61,7 +61,9 @@ def run_analysis(symbols: list[str], *, live: bool, days: int = 125, prompt: str
                                 start_date=start_date, end_date=end_date)
     finally:
         events = list(system.events)
-    return {"report": report, "events": events, "trace_path": save_trace(events), "live": live}
+    news_status = getattr(sentiment, "last_status", None) if sentiment is not None else None
+    return {"report": report, "events": events, "trace_path": save_trace(events), "live": live,
+            "news_status": news_status}
 
 
 def preview_order(symbol: str, side: str, qty: int, limit_price: str, *, live: bool) -> dict:
