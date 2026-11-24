@@ -14,10 +14,12 @@ Safety by design:
 from __future__ import annotations
 
 import json
+import re
 from datetime import timedelta
 
 import streamlit as st
 
+import history
 from runner import preview_order, run_analysis
 
 TICKER_CHOICES = ["QQQ", "SQQQ"]
@@ -31,6 +33,20 @@ STATUS_NOTE = {
 def status_box(status: str) -> None:
     text = STATUS_NOTE.get(status, status)
     {"VALID": st.success, "REVIEW": st.warning}.get(status, st.error)(text)
+
+
+def tickers_for_run(chosen: list[str], prompt: str) -> tuple[list[str], str]:
+    """Buttons win. With none selected: use QQQ/SQQQ named in the question, else QQQ.
+
+    The page (not the AI) decides, and only from the two allowed tickers, so a question can never
+    inject any other symbol.
+    """
+    if chosen:
+        return list(chosen), ""
+    named = list(dict.fromkeys(re.findall(r"\b(SQQQ|QQQ)\b", (prompt or "").upper())))
+    if named:
+        return named, f"No ticker button selected: used {', '.join(named)} because the question names it."
+    return ["QQQ"], "No ticker button selected: used QQQ by default."
 
 
 def choose_tickers() -> list[str]:
@@ -124,7 +140,7 @@ def panel_risk(ticker: str, entry: dict) -> None:
 def panel_orders(chosen: list[str], live: bool) -> None:
     st.info("Preview only. Nothing is sent to the broker from this page. "
             "Submitting a paper order stays in the command line with explicit confirmation.")
-    with st.form("order_preview"):
+    with st.form("order_form"):
         c = st.columns(4)
         symbol = c[0].selectbox("Symbol", chosen or TICKER_CHOICES)
         side = c[1].selectbox("Side", ["buy", "sell"])
@@ -133,11 +149,15 @@ def panel_orders(chosen: list[str], live: bool) -> None:
         go = st.form_submit_button("Preview order (does not send)")
     if go:
         try:
-            st.session_state["order_preview"] = preview_order(symbol, side, int(qty), limit, live=live)
+            st.session_state["order_result"] = preview_order(symbol, side, int(qty), limit, live=live)
+            if st.session_state.get("save_hist", True):
+                history.log_event("order_preview_ok", f"{side} {int(qty)} {symbol} limit {limit} (preview only)")
         except Exception as exc:
-            st.session_state.pop("order_preview", None)
+            st.session_state.pop("order_result", None)
+            if st.session_state.get("save_hist", True):
+                history.log_event("order_preview_rejected", f"{side} {int(qty)} {symbol}: {str(exc)[:120]}")
             st.error(f"Order not allowed: {exc}")
-    prev = st.session_state.get("order_preview")
+    prev = st.session_state.get("order_result")
     if prev:
         st.success("Order passes the project checks (PREVIEW ONLY, not sent).")
         st.table([prev])
@@ -147,8 +167,49 @@ def panel_orders(chosen: list[str], live: bool) -> None:
         st.caption("It also needs ENABLE_PAPER_ORDERS=true in .env, and the broker re-checks every limit.")
 
 
+def clear_screen() -> None:
+    """Clear button: remove the shown results, order preview and typed question. History is kept."""
+    for key in ("last_run", "order_result"):
+        st.session_state.pop(key, None)
+    st.session_state["user_prompt"] = ""
+
+
+def fill_download(slot, out: dict | None) -> None:
+    """Download button lives under More options; it is filled after the run so it always has the latest report."""
+    with slot:
+        st.download_button("Download full report (JSON)",
+                           data=json.dumps(out["report"], indent=2, default=str) if out else "",
+                           file_name="analysis_report.json", mime="application/json",
+                           disabled=not out, key="dl_report",
+                           help="Available after a run.")
+
+
+def history_panel() -> None:
+    st.caption("Local SQLite database (traces/run_history.db). Question text and account values are never stored.")
+    runs = history.list_runs(20)
+    if not runs:
+        st.info("No saved runs yet. Tick 'Save runs to local history' under More options, then run an analysis.")
+    else:
+        st.markdown("**Saved runs**")
+        st.table(runs)
+        ids = [r["id"] for r in runs]
+        pick = st.selectbox("Open a saved run", ids, key="history_pick")
+        saved = history.get_run(pick)
+        if saved:
+            st.json(saved, expanded=False)
+    ev = history.list_events(10)
+    if ev:
+        st.markdown("**Recent events** (blocked prompts and order previews)")
+        st.table(ev)
+    if (runs or ev) and st.button("Clear history", key="history_clear"):
+        history.clear_history()
+        st.rerun()
+
+
 def show_results(out: dict) -> None:
     report = out["report"]
+    if out.get("ticker_note"):
+        st.info(out["ticker_note"])
     (st.warning if report["mode"].startswith("OFFLINE") else st.success)(
         f"Mode: {report['mode']}  ·  {report['generated_at_utc']}")
     symbols = list(report["symbols"])
@@ -174,8 +235,6 @@ def show_results(out: dict) -> None:
         st.markdown("**Agents invoked:** " + ", ".join(report["coordination"]["agents_invoked"]))
         st.markdown("**Path:** " + " → ".join(report["coordination"]["path"]))
         st.json(out["events"])
-    st.download_button("Download full report (JSON)", data=json.dumps(report, indent=2, default=str),
-                       file_name="analysis_report.json", mime="application/json")
 
 
 # ---------- page ----------
@@ -198,14 +257,24 @@ def main() -> None:
         mode = st.radio("Data mode", ["Demo (safe)", "Live (Gemini + Alpaca paper)"], index=0)
         live = mode.startswith("Live")
         confirmed = True
+        use_news = False
         if live:
             confirmed = st.checkbox("I understand and want a live run")
+            use_news = st.checkbox("Enable News & Sentiment agent",
+                                   help="Needs ALPACA_API_KEY / ALPACA_SECRET_KEY (market data) and GEMINI_API_KEY in .env.")
         prompt = st.text_area("Please enter your question", "", height=150, key="user_prompt",
                               placeholder="e.g. Explain what RSI and volatility mean for my paper position")
-        run = st.button("Run analysis", type="primary", disabled=live and not confirmed)
+        b1, b2 = st.columns(2)
+        run = b1.button("Run analysis", type="primary", disabled=live and not confirmed)
+        b2.button("Clear / Cancel", on_click=clear_screen,
+                  help="Clears the results and your question. Clicking it while a run is in progress stops that run.")
         with st.expander("More options"):
             days = st.slider("History (calendar days)", 30, 365, 125, key="history_days",
                              help="Use 90 or more so the 50-day average can be calculated.")
+            save_hist = st.checkbox("Save runs to local history", value=True,
+                                    help="Small SQLite file in traces/ (not committed). No account values or question text are saved.")
+            st.session_state["save_hist"] = save_hist
+            dl_slot = st.container()
             use_dates = st.checkbox("Use an exact date range instead")
             d_start = d_end = None
             if use_dates:
@@ -213,22 +282,37 @@ def main() -> None:
                 d_start = st.date_input("Start date", value=d_end - timedelta(days=125), key="d_start")
 
     # ---- right: results ----
+    run_error = None
     if run:
         try:
-            if not chosen:
-                raise ValueError("Select at least one ticker.")
+            symbols, note = tickers_for_run(chosen, prompt)
             with st.spinner("Running agents..."):
-                st.session_state["last_run"] = run_analysis(list(chosen), live=live, days=days, prompt=prompt,
+                st.session_state["last_run"] = run_analysis(symbols, live=live, days=days, prompt=prompt,
                                                             start_date=d_start.isoformat() if d_start else None,
-                                                            end_date=d_end.isoformat() if d_end else None)
+                                                            end_date=d_end.isoformat() if d_end else None,
+                                                            news=use_news)
+                st.session_state["last_run"]["ticker_note"] = note
+                if save_hist:
+                    history.save_run(st.session_state["last_run"], prompt_length=len(prompt), news_enabled=use_news)
         except Exception as exc:  # guardrail rejections, missing keys, bad input -> shown safely
             st.session_state.pop("last_run", None)
-            st.error(f"Could not run: {exc}")
-            return
+            if save_hist and "guard" in str(exc).lower():
+                history.log_event("prompt_rejected", f"input guardrail, prompt length {len(prompt)}")
+            run_error = f"Could not run: {exc}"
 
     out = st.session_state.get("last_run")
-    if out:
-        show_results(out)
+    fill_download(dl_slot, out)
+    results_tab, history_tab = st.tabs(["Results", "History"])
+    with results_tab:
+        if run_error:
+            st.error(run_error)
+        elif out:
+            show_results(out)
+        else:
+            st.info("Choose a ticker (or type a question), then click Run analysis. "
+                    "Past runs are under the History tab.")
+    with history_tab:
+        history_panel()
 
 
 main()

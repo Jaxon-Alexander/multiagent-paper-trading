@@ -43,14 +43,19 @@ def save_trace(events: list[dict]) -> str:
 
 
 def run_analysis(symbols: list[str], *, live: bool, days: int = 125, prompt: str = "",
-                 start_date: str | None = None, end_date: str | None = None) -> dict:
+                 start_date: str | None = None, end_date: str | None = None,
+                 news: bool = False) -> dict:
     """Run one analysis. Returns {'report':..., 'events':..., 'trace_path':...}.
 
     live=False -> offline synthetic demo, no Gemini/Alpaca calls.
     live=True  -> real Gemini + Alpaca PAPER read-only data (needs keys in .env).
     Errors (bad prompt, missing keys, ...) are raised and shown on the page.
     """
-    system = MultiAgentOrchestrator(demo=not live)
+    sentiment = None
+    if live and news:       # optional News & Sentiment agent (live only; needs Gemini + Alpaca market-data keys)
+        from market_agents.extensions.news_sentiment import NewsSentimentProvider
+        sentiment = NewsSentimentProvider()
+    system = MultiAgentOrchestrator(demo=not live, sentiment=sentiment)
     try:
         report = system.analyze(symbols, days=days, prompt=prompt,
                                 start_date=start_date, end_date=end_date)

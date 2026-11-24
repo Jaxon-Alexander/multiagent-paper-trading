@@ -37,3 +37,10 @@ Live mode also needs a tick-box confirmation.
 Market Overview, Paper Portfolio, News & Sentiment, Risk & Validation, Manual Paper Orders (preview only), Trace.
 The order panel calls the existing `preview_limit_order` checks only. Submitting a paper order stays in the command line
 (`paper-order ... --confirm-paper`, plus `ENABLE_PAPER_ORDERS=true`). Demo mode previews against the synthetic account.
+
+## Optional run history (SQLite)
+`ui/history.py` keeps a small local record of runs in `traces/run_history.db` (already outside Git). Tick/untick
+"Save runs to local history" under More options. Stored: time, mode, tickers, status and indicators per ticker, the
+filtered report, and short events (blocked prompts, order previews). Not stored: the question text (length only),
+account balances or holdings, API keys. Only Python writes to it; no agent can read or write it. It is a new file and
+changes no project code.
